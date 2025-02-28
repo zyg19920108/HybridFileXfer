@@ -12,7 +12,7 @@ import java.util.Locale;
 public class SendFilesCall extends TransferCall {
     private final JobPool jobPool;
 
-    public SendFilesCall(TransferChannel tChannel,JobPool jobPool) {
+    public SendFilesCall(TransferChannel tChannel, JobPool jobPool) {
         super(tChannel);
         this.jobPool = jobPool;
     }
@@ -21,7 +21,7 @@ public class SendFilesCall extends TransferCall {
     public Void call() throws Exception {
         try {
             while (true) {
-                if (jobPool.isInterrupted()){
+                if (jobPool.isInterrupted()) {
                     dos.writeShort(TransferIdentifiers.END_OF_INTERRUPTED);
                     System.out.println(Thread.currentThread().getName() + ": 因其他通道出现问题，传输已中断");
                     return null;
@@ -35,12 +35,12 @@ public class SendFilesCall extends TransferCall {
                 File nextFile = job.targetFile;
                 String remotePath = job.toRemotePath();
                 if (!job.isSlice) {
-                    sendFileOrDir(nextFile,remotePath);
+                    sendFileOrDir(nextFile, remotePath);
                 } else {
-                    sendFileSlice(job,nextFile,remotePath);
+                    sendFileSlice(job, nextFile, remotePath);
                 }
             }
-        } catch (Exception e){
+        } catch (Exception e) {
             jobPool.setInterrupted(true);
             throw e;
         }
@@ -53,7 +53,7 @@ public class SendFilesCall extends TransferCall {
                     ((float) file.length()) / 1024 / 1024,
                     file.getCanonicalPath());
 
-            System.out.println("{" + Thread.currentThread().getName() + "}: " + desc + " ==> " + remotePath);
+
             dos.writeShort(TransferIdentifiers.FILE); // 文件标识
             dos.writeUTF(remotePath); // 远程文件路径
             dos.writeLong(file.lastModified()); // 修改日期
@@ -63,15 +63,20 @@ public class SendFilesCall extends TransferCall {
             try (FileInputStream fileInputStream = new FileInputStream(file);
                  FileChannel fileChannel = fileInputStream.getChannel()) {
 
-                long size = file.length();
+                long totalSize = file.length();
                 long position = 0;
-                while (position < size) {
-                    //long bytesToTransfer = Math.min(CHUNK_SIZE, size - position);
-                    long transferred = fileChannel.transferTo(position, size - position, socketChannel);
+                while (position < totalSize) {
+                    long transferred = fileChannel.transferTo(position, totalSize - position, socketChannel);
                     if (transferred <= 0) {
                         break;
                     }
                     position += transferred;
+
+
+                // 计算整体进度
+                float totalProgress = (float) position / totalSize * 100;
+                System.out.printf(Locale.getDefault(), "{%s},传输文件名,%s,整体进度,%.2f%%,\n",
+                        Thread.currentThread().getName(), file.getName(),totalProgress);
                 }
             }
         } else if (file.isDirectory()) {
@@ -89,7 +94,7 @@ public class SendFilesCall extends TransferCall {
                 job.getTotalSize() / 1024 / 1024,
                 file.getCanonicalPath());
 
-        System.out.println("{" + Thread.currentThread().getName() + "}" + desc + " ==> " + remotePath);
+
         dos.writeShort(TransferIdentifiers.FILE_SLICE); // 文件切片标识
         dos.writeUTF(remotePath); // 远程文件路径
         dos.writeLong(file.lastModified()); // 修改日期
@@ -100,8 +105,10 @@ public class SendFilesCall extends TransferCall {
         // 使用FileChannel配合RandomAccessFile进行切片传输
         try (RandomAccessFile raf = new RandomAccessFile(file, "r");
              FileChannel fileChannel = raf.getChannel()) {
+            long totalSize = job.getTotalSize();
+            long sliceSize = job.endRange - job.startRange;
             long position = job.startRange;
-            long remaining = job.endRange - job.startRange;
+            long remaining = sliceSize;
 
             while (remaining > 0) {
                 long transferred = fileChannel.transferTo(position, remaining, socketChannel);
@@ -110,6 +117,11 @@ public class SendFilesCall extends TransferCall {
                 }
                 position += transferred;
                 remaining -= transferred;
+
+                // 计算整体进度
+                float totalProgress = (float) position / totalSize * 100;
+                System.out.printf(Locale.getDefault(), "{%s},传输文件名,%s,整体进度,%.2f%%,\n",
+                        Thread.currentThread().getName(), file.getName(),totalProgress);
             }
         }
     }
